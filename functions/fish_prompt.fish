@@ -1,33 +1,71 @@
-function fish_prompt
-end
-
-status is-interactive || exit
-
 _tide_remove_unusable_items
 
-set -g _tide_left_prompt_display_var _tide_left_prompt_display_$fish_pid
-set -gx _tide_right_prompt_display_var _tide_right_prompt_display_$fish_pid
+function fish_prompt
+    set -g _tide_last_status $status
+    set -g _tide_last_pipestatus $pipestatus
 
-function _tide_refresh_prompt --on-variable $_tide_left_prompt_display_var --on-variable $_tide_right_prompt_display_var
-    set -g _tide_self_repainting # prevents us from creating a second background job
-    commandline --function repaint
+    test "$tide_prompt_add_newline_before" = true && echo
+
+    left_prompt=(_tide_left_prompt) right_prompt=(_tide_right_prompt) if set -q left_prompt[2] # If prompt is two lines
+        set -l prompt_and_frame_color (set_color $tide_prompt_color_frame_and_connection -b normal || echo)
+        if test "$tide_left_prompt_frame_enabled" = true
+            set left_prompt[1] $prompt_and_frame_color╭─"$left_prompt[1]"
+            set left_prompt[2] $prompt_and_frame_color╰─"$left_prompt[2]"
+        end
+        if test "$tide_right_prompt_frame_enabled" = true
+            set right_prompt[1] "$right_prompt[1]"$prompt_and_frame_color─╮
+            set right_prompt[2] "$right_prompt[2]"$prompt_and_frame_color─╯
+        end
+
+        set -lx dist_btwn_sides (math $COLUMNS + 7 - ( # Regex removes color. 7 = @@PWD@@ length which will be replaced
+            string replace -ar '\e(\[[\d;]*|\(B\e\[)m(\co)?' '' "$left_prompt[1]""$right_prompt[1]" | string length))
+        printf '%s' (string replace @@PWD@@ (_tide_pwd) "$left_prompt[1]") $prompt_and_frame_color
+
+        string repeat --no-newline --max (math max 0, $dist_btwn_sides - $pwd_length) $tide_prompt_icon_connection
+        printf '%s' $right_prompt[1] \n $left_prompt[2]' '
+
+        set -g _tide_right_prompt_display_var $right_prompt[2]
+    else
+        set -lx dist_btwn_sides (math $COLUMNS + 7 -$tide_prompt_min_cols - (
+            string replace -ar '\e(\[[\d;]*|\(B\e\[)m(\co)?' '' "$left_prompt[1]""$right_prompt[1]" | string length))
+        string replace @@PWD@@ (_tide_pwd) "$left_prompt[1] "
+
+        set -g _tide_right_prompt_display_var $right_prompt[1]
+    end
 end
 
-function fish_prompt
-    _tide_last_status=$status _tide_last_pipestatus=$pipestatus if not set -e _tide_self_repainting
-        _tide_jobs=(jobs --pid) fish --command "
-            CMD_DURATION=$CMD_DURATION COLUMNS=$COLUMNS fish_bind_mode=$fish_bind_mode \
-            set -U $_tide_left_prompt_display_var (_tide_prompt)" &
-        builtin disown
+function _tide_left_prompt
+    set -g _tide_last_item newline
+    set -g _tide_which_side_working_on left
 
-        command kill $_tide_last_pid 2>/dev/null
-        set -g _tide_last_pid $last_pid
+    for item in $tide_left_prompt_items
+        _tide_item_$item
     end
 
-    string unescape $$_tide_left_prompt_display_var
+    if not contains -- $_tide_last_item newline character
+        set_color $_tide_previous_bg_color -b normal
+        printf '%s' $tide_left_prompt_suffix
+    end
+
+    set_color normal # Make sure there is something printed on the last line
 end
 
-# Double underscores to avoid erasing this function on uninstall
-function __tide_on_fish_exit --on-event fish_exit
-    set -e $_tide_left_prompt_display_var $_tide_right_prompt_display_var
+function _tide_right_prompt
+    set -g _tide_last_item newline
+    set -g _tide_which_side_working_on right
+
+    for item in $tide_right_prompt_items
+        _tide_item_$item
+    end
+
+    if test "$_tide_last_item" != newline
+        set_color $_tide_previous_bg_color -b normal
+        printf '%s' $tide_right_prompt_suffix
+    end
+
+    set_color normal # Make sure there is something printed on the last line
+end
+
+function _tide_item_pwd
+    _tide_print_item pwd @@PWD@@
 end
